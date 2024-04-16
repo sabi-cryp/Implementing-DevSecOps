@@ -1,0 +1,116 @@
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_REGISTRY = 'sabrine/ker'
+        SONAR_URL = 'localhost:9000'
+        NEXUS_URL = 'localhost:8082'
+        KUBE_CONFIG = credentials('kube-config')
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                script {
+                    def mvnHome = tool 'Maven'
+                    sh "${mvnHome}/bin/mvn clean package"
+                }
+            }
+        }
+        
+        stage('Test') {
+            steps {
+                script {
+                    def mvnHome = tool 'Maven'
+                    sh "${mvnHome}/bin/mvn test"
+                }
+            }
+        }
+        
+        stage('Code Analysis') {
+            steps {
+                script {
+                    withSonarQubeEnv('SonarQube') {
+                        def mvnHome = tool 'Maven'
+                        sh "${mvnHome}/bin/mvn sonar:sonar"
+                    }
+                }
+            }
+        }
+        
+        stage('Docker Build & Push') {
+            steps {
+                script {
+                    docker.build("sabrineker/app")
+                    docker.withRegistry("${DOCKER_REGISTRY}", "docker-credentials") {
+                        docker.image("sabrineker/app").push("latest")
+                    }
+                }
+            }
+        }
+        
+        stage('Security Scan') {
+            steps {
+                script {
+                    sh "trivy sabrineker/app:latest"
+                }
+            }
+        }
+        
+        stage('Deploy to Nexus') {
+            steps {
+                script {
+                    nexusArtifactUploader(
+                        nexusVersion: 'nexus3',
+                        protocol: 'http',
+                        nexusUrl: "${NEXUS_URL}",
+                       // groupId: 'your-group-id',
+                       // version: 'your-version',
+                        repository: 'localhost:8082/app',
+                       // credentialsId: 'your-nexus-credentials',
+                       // artifacts: [
+                        //    [artifactId: 'your-artifact', classifier: '', file: 'path/to/your/file']
+                      //  ]
+                    )
+                }
+            }
+        }
+        
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    withKubeConfig(credentialsId: 'kube-config', serverUrl: 'your-kubernetes-server-url') {
+                        sh 'kubectl apply -f kubernetes/deployment.yaml'
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy to ArgoCD') {
+            steps {
+                script {
+                    sh 'argocd app sync app'
+                }
+            }
+        }
+        
+        stage('Deploy Helm Chart') {
+            steps {
+                script {
+                    sh 'helm install your-helm-chart-name path/to/chart'
+                }
+            }
+        }
+        
+        stage('Monitor with Prometheus and Grafana') {
+            steps {
+                script {
+                    sh 'kubectl apply -f path/to/prometheus-config.yaml'
+                    sh 'kubectl apply -f path/to/grafana-config.yaml'
+                }
